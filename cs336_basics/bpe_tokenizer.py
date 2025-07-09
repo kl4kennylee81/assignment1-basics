@@ -1,107 +1,94 @@
 import regex as re
 from collections import defaultdict, Counter
+import multiprocessing as mp
+import os
+from typing import BinaryIO
+import heapq
+
+def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special_token: bytes) -> list[int]:
+    """Chunk the file into parts that can be counted independently."""
+    assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
+
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)
+
+    chunk_size = file_size // desired_num_chunks
+    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
+    chunk_boundaries[-1] = file_size
+
+    mini_chunk_size = 4096
+
+    for bi in range(1, len(chunk_boundaries) - 1):
+        initial_position = chunk_boundaries[bi]
+        file.seek(initial_position)
+        while True:
+            mini_chunk = file.read(mini_chunk_size)
+            if mini_chunk == b"":
+                chunk_boundaries[bi] = file_size
+                break
+            found_at = mini_chunk.find(split_special_token)
+            if found_at != -1:
+                chunk_boundaries[bi] = initial_position + found_at
+                break
+            initial_position += mini_chunk_size
+
+    return sorted(set(chunk_boundaries))
 
 def pretokenize(text, special_tokens=None):
     """Tokenize text into byte tuples, splitting on special tokens first."""
     pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     
     if not special_tokens:
-        # No special tokens - process entire text
-        return Counter(tuple(match.group(0).encode("utf-8")) 
-                      for match in re.finditer(pattern, text))
+        return Counter(tuple(match.group(0).encode("utf-8")) for match in re.finditer(pattern, text))
     
-    # Split text on special tokens first
     special_pattern = '|'.join(re.escape(token) for token in special_tokens)
     text_segments = re.split(f'({special_pattern})', text)
     
     result = Counter()
-    
     for segment in text_segments:
-        if not segment:  # Skip empty segments
+        if not segment:
             continue
-            
         if segment in special_tokens:
-            # This is a special token - add it as-is
             result[tuple(segment.encode("utf-8"))] += 1
         else:
-            # This is regular text - pretokenize it
-            segment_tokens = Counter(tuple(match.group(0).encode("utf-8")) 
-                                   for match in re.finditer(pattern, segment))
+            segment_tokens = Counter(tuple(match.group(0).encode("utf-8")) for match in re.finditer(pattern, segment))
             result.update(segment_tokens)
     
     return result
 
-def get_pair_counts(pretoken_counts, special_tokens=None):
-    """Count all adjacent byte pairs across pretokens, skipping special tokens."""
-    special_tokens = special_tokens or []
-    
-    # Convert special tokens to byte tuples for comparison
-    special_byte_tuples = {tuple(token.encode("utf-8")) for token in special_tokens}
-    
-    pair_counts = defaultdict(int)
-    pair_locations = defaultdict(list)
-    
-    for pretoken, count in pretoken_counts.items():
-        # Skip special tokens - they should never have their bytes paired
-        if pretoken in special_byte_tuples:
-            continue
-            
-        if len(pretoken) < 2:
-            continue
-            
-        for i in range(len(pretoken) - 1):
-            pair = (pretoken[i], pretoken[i + 1])
-            pair_counts[pair] += count
-            pair_locations[pair].append(pretoken)
-    
-    return dict(pair_counts), dict(pair_locations)
+def process_chunk(args):
+    """Process a single chunk of the file - designed for multiprocessing."""
+    filepath, start, end, special_tokens = args
+    with open(filepath, "rb") as f:
+        f.seek(start)
+        chunk_bytes = f.read(end - start)
+        chunk_text = chunk_bytes.decode("utf-8", errors="ignore")
+    return pretokenize(chunk_text, special_tokens)
 
-def apply_merge(pretokens, old_pair, new_token, special_tokens=None):
-    """Replace all occurrences of old_pair with new_token in pretokens."""
-    special_tokens = special_tokens or []
+def parallel_pretokenize(filepath, special_tokens):
+    num_processes = mp.cpu_count()
+    with open(filepath, "rb") as f:
+        boundaries = find_chunk_boundaries(f, num_processes, "<|endoftext|>".encode("utf-8"))
     
-    # Convert special tokens to byte tuples for comparison
-    special_byte_tuples = {tuple(token.encode("utf-8")) for token in special_tokens}
+    chunk_args = [(filepath, start, end, special_tokens) for start, end in zip(boundaries[:-1], boundaries[1:])]
+    with mp.Pool(num_processes) as pool:
+        chunk_results = pool.map(process_chunk, chunk_args)
     
-    updated = {}
-    
-    for pretoken, count in pretokens.items():
-        # Skip special tokens - they should never be modified
-        if pretoken in special_byte_tuples:
-            updated[pretoken] = count
-            continue
-            
-        if len(pretoken) < 2 or old_pair[0] not in pretoken:
-            updated[pretoken] = count
-            continue
-            
-        # Build new pretoken by replacing pairs
-        new_pretoken = []
-        i = 0
-        while i < len(pretoken):
-            if (i < len(pretoken) - 1 and 
-                pretoken[i] == old_pair[0] and 
-                pretoken[i + 1] == old_pair[1]):
-                new_pretoken.append(new_token)
-                i += 2
-            else:
-                new_pretoken.append(pretoken[i])
-                i += 1
-        
-        new_key = tuple(new_pretoken)
-        updated[new_key] = updated.get(new_key, 0) + count
-    
-    return updated
+    combined_result = Counter()
+    for result in chunk_results:
+        combined_result.update(result)
+    return combined_result
 
-class BPETokenizer:
-    def __init__(self, input_path, vocab_size, special_tokens=None):
-        assert vocab_size > 256, "Vocabulary size must be greater than 256"
-        
-        self.input_path = input_path
+class OptimizedBPETrainer:
+    """Optimized BPE trainer with incremental pair count updates."""
+    
+    def __init__(self, vocab_size, special_tokens=None):
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens or []
+        self.special_byte_tuples = {tuple(token.encode("utf-8")) for token in self.special_tokens}
         
-        # Initialize vocabulary: bytes + special tokens
+        # Core data structures
         self.vocab = {i: bytes([i]) for i in range(256)}
         self.merges = {}
         
@@ -113,6 +100,11 @@ class BPETokenizer:
         
         self.next_token_id = next_id
         self.max_merges = max(0, vocab_size - len(self.vocab))
+        
+        # Optimization: cached data structures
+        self.pair_counts = defaultdict(int)
+        self.pair_locations = defaultdict(set)  # Use set for faster removal
+        self.pretoken_counts = {}
 
     def _get_token_bytes(self, token_id):
         """Recursively resolve token to its byte representation."""
@@ -123,56 +115,139 @@ class BPETokenizer:
         if isinstance(token_value, bytes):
             return token_value
         
-        # It's a merge pair - recursively resolve both parts
         left_id, right_id = token_value
         return self._get_token_bytes(left_id) + self._get_token_bytes(right_id)
 
-    def _select_best_pair(self, pair_counts):
-        """Select the most frequent pair, using byte values for tie-breaking."""
-        return max(pair_counts.keys(), key=lambda pair: (
-            pair_counts[pair],
+    def _initialize_pair_counts(self):
+        """Initialize pair counts from pretokens - only called once."""
+        self.pair_counts.clear()
+        self.pair_locations.clear()
+        
+        for pretoken, count in self.pretoken_counts.items():
+            if pretoken in self.special_byte_tuples or len(pretoken) < 2:
+                continue
+                
+            for i in range(len(pretoken) - 1):
+                pair = (pretoken[i], pretoken[i + 1])
+                self.pair_counts[pair] += count
+                self.pair_locations[pair].add(pretoken)
+
+    def _get_pairs_in_pretoken(self, pretoken):
+        """Get all adjacent pairs in a pretoken."""
+        if len(pretoken) < 2:
+            return []
+        return [(pretoken[i], pretoken[i + 1]) for i in range(len(pretoken) - 1)]
+
+    def _apply_merge_optimized(self, old_pair, new_token):
+        """Apply merge and incrementally update pair counts."""
+        affected_pretokens = list(self.pair_locations[old_pair])
+        
+        for old_pretoken in affected_pretokens:
+            if old_pretoken not in self.pretoken_counts:
+                continue
+                
+            count = self.pretoken_counts[old_pretoken]
+            
+            # Remove old pairs from counts
+            for pair in self._get_pairs_in_pretoken(old_pretoken):
+                self.pair_counts[pair] -= count
+                self.pair_locations[pair].discard(old_pretoken)
+                if self.pair_counts[pair] <= 0:
+                    del self.pair_counts[pair]
+                    del self.pair_locations[pair]
+            
+            # Create new pretoken by applying merge
+            new_pretoken = self._replace_pair_in_pretoken(old_pretoken, old_pair, new_token)
+            
+            # Update pretoken counts
+            del self.pretoken_counts[old_pretoken]
+            self.pretoken_counts[new_pretoken] = self.pretoken_counts.get(new_pretoken, 0) + count
+            
+            # Add new pairs to counts
+            if new_pretoken not in self.special_byte_tuples:
+                for pair in self._get_pairs_in_pretoken(new_pretoken):
+                    self.pair_counts[pair] += count
+                    self.pair_locations[pair].add(new_pretoken)
+
+    def _replace_pair_in_pretoken(self, pretoken, old_pair, new_token):
+        """Replace old_pair with new_token in pretoken."""
+        result = []
+        i = 0
+        while i < len(pretoken):
+            if (i < len(pretoken) - 1 and 
+                pretoken[i] == old_pair[0] and 
+                pretoken[i + 1] == old_pair[1]):
+                result.append(new_token)
+                i += 2
+            else:
+                result.append(pretoken[i])
+                i += 1
+        return tuple(result)
+
+    def _select_best_pair(self):
+        """Select the most frequent pair with lexicographic tie-breaking."""
+        if not self.pair_counts:
+            return None
+            
+        return max(self.pair_counts.keys(), key=lambda pair: (
+            self.pair_counts[pair],
             self._get_token_bytes(pair[0]),
             self._get_token_bytes(pair[1])
         ))
 
-    def train(self):
-        """Train the BPE tokenizer on the input corpus."""
-        # Load and preprocess text
-        with open(self.input_path, "r", encoding="utf-8") as f:
-            text = f.read()
+    def train(self, pretokens):
+        """Train BPE with optimized incremental updates."""
+        self.pretoken_counts = dict(pretokens)
         
-        pretokens = pretokenize(text, self.special_tokens)
-        
-        # Perform BPE merges
-        for _ in range(self.max_merges):
-            pair_counts, pair_locations = get_pair_counts(pretokens, self.special_tokens)
-            
-            if not pair_counts:
+        # Initialize pair counts once
+        self._initialize_pair_counts()
+        # Perform merges with incremental updates
+        for step in range(self.max_merges):
+            best_pair = self._select_best_pair()
+            if not best_pair:
                 break
             
-            # Select best pair and create new token
-            best_pair = self._select_best_pair(pair_counts)
+            # Record the merge
             self.vocab[self.next_token_id] = best_pair
             self.merges[best_pair] = self.next_token_id
             
-            # Apply the merge
-            pretokens = apply_merge(pretokens, best_pair, self.next_token_id, self.special_tokens)
+            # Apply merge with incremental updates
+            self._apply_merge_optimized(best_pair, self.next_token_id)
             self.next_token_id += 1
-        
-        # Generate outputs
-        self._build_outputs()
 
-    def _build_outputs(self):
-        """Build final vocabulary and merge list for external use."""
-        self.output_vocab = {
-            token_id: self._get_token_bytes(token_id) 
-            for token_id in self.vocab
-        }
+    def get_vocab_and_merges(self):
+        """Build and return final vocabulary and merges."""
+        output_vocab = {token_id: self._get_token_bytes(token_id) for token_id in self.vocab}
+        output_merges = [(output_vocab[pair[0]], output_vocab[pair[1]]) for pair in self.merges]
+        return output_vocab, output_merges
+
+class BPETokenizer:
+    """Simplified BPE tokenizer interface with optimized training."""
+    
+    def __init__(self, input_path, vocab_size, special_tokens=None):
+        assert vocab_size > 256, "Vocabulary size must be greater than 256"
+        self.input_path = input_path
+        self.vocab_size = vocab_size
+        self.special_tokens = special_tokens or []
+        self.trainer = OptimizedBPETrainer(vocab_size, special_tokens)
+
+    def train(self):
+        """Train the BPE tokenizer with optimized merging."""
         
-        self.output_merges = [
-            (self.output_vocab[pair[0]], self.output_vocab[pair[1]])
-            for pair in self.merges
-        ]
+        # Use parallel pretokenization for large files
+        if os.path.getsize(self.input_path) > 10_000_000:  # 10MB threshold
+            pretokens = parallel_pretokenize(self.input_path, self.special_tokens)
+        else:
+            with open(self.input_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            pretokens = pretokenize(text, self.special_tokens)
+        
+        
+        # Train with optimized algorithm
+        self.trainer.train(pretokens)
+        
+        # Get results
+        self.output_vocab, self.output_merges = self.trainer.get_vocab_and_merges()
 
     def get_vocab_and_merges(self):
         """Return the trained vocabulary and merges."""
