@@ -9,7 +9,7 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 
-from cs336_basics.bpe_tokenizer import BPETokenizer
+from cs336_basics.train_bpe import TrainBPE
 
 
 
@@ -590,7 +590,7 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    tokenizer = BPETokenizer(input_path, vocab_size, special_tokens)
+    tokenizer = TrainBPE(input_path, vocab_size, special_tokens)
     tokenizer.train()
     vocab, merges = tokenizer.get_vocab_and_merges()
     return vocab, merges
