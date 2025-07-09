@@ -35,13 +35,18 @@ def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special
 
     return sorted(set(chunk_boundaries))
 
+# Compile regex pattern at module level for better performance
+_COMPILED_PATTERN = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+
 def pretokenize(text, special_tokens=None):
     """Tokenize text into byte tuples, splitting on special tokens first."""
-    pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    
     if not special_tokens:
-        return Counter(tuple(match.group(0).encode("utf-8")) for match in re.finditer(pattern, text))
+        # Fast path for no special tokens
+        return Counter(tuple(match.group(0).encode("utf-8")) 
+                      for match in _COMPILED_PATTERN.finditer(text))
     
+    # Convert special tokens to set for faster lookup
+    special_tokens_set = set(special_tokens)
     special_pattern = '|'.join(re.escape(token) for token in special_tokens)
     text_segments = re.split(f'({special_pattern})', text)
     
@@ -49,10 +54,12 @@ def pretokenize(text, special_tokens=None):
     for segment in text_segments:
         if not segment:
             continue
-        if segment in special_tokens:
+        if segment in special_tokens_set:
             result[tuple(segment.encode("utf-8"))] += 1
         else:
-            segment_tokens = Counter(tuple(match.group(0).encode("utf-8")) for match in re.finditer(pattern, segment))
+            # Batch process segment tokens
+            segment_tokens = Counter(tuple(match.group(0).encode("utf-8")) 
+                                   for match in _COMPILED_PATTERN.finditer(segment))
             result.update(segment_tokens)
     
     return result
@@ -126,46 +133,56 @@ class OptimizedBPETrainer:
         for pretoken, count in self.pretoken_counts.items():
             if pretoken in self.special_byte_tuples or len(pretoken) < 2:
                 continue
-                
-            for i in range(len(pretoken) - 1):
+            
+            # Process all pairs in this pretoken at once
+            pretoken_len = len(pretoken)
+            for i in range(pretoken_len - 1):
                 pair = (pretoken[i], pretoken[i + 1])
                 self.pair_counts[pair] += count
                 self.pair_locations[pair].add(pretoken)
 
     def _get_pairs_in_pretoken(self, pretoken):
         """Get all adjacent pairs in a pretoken."""
-        if len(pretoken) < 2:
+        pretoken_len = len(pretoken)
+        if pretoken_len < 2:
             return []
-        return [(pretoken[i], pretoken[i + 1]) for i in range(len(pretoken) - 1)]
+        return [(pretoken[i], pretoken[i + 1]) for i in range(pretoken_len - 1)]
 
     def _apply_merge_optimized(self, old_pair, new_token):
         """Apply merge and incrementally update pair counts."""
-        affected_pretokens = list(self.pair_locations[old_pair])
+        affected_pretokens = self.pair_locations[old_pair]
         
+        # Process all affected pretokens
+        pretokens_to_update = []
         for old_pretoken in affected_pretokens:
-            if old_pretoken not in self.pretoken_counts:
-                continue
-                
-            count = self.pretoken_counts[old_pretoken]
-            
+            if old_pretoken in self.pretoken_counts:
+                pretokens_to_update.append((old_pretoken, self.pretoken_counts[old_pretoken]))
+        
+        for old_pretoken, count in pretokens_to_update:
             # Remove old pairs from counts
-            for pair in self._get_pairs_in_pretoken(old_pretoken):
+            old_pairs = self._get_pairs_in_pretoken(old_pretoken)
+            for pair in old_pairs:
                 self.pair_counts[pair] -= count
                 self.pair_locations[pair].discard(old_pretoken)
                 if self.pair_counts[pair] <= 0:
-                    del self.pair_counts[pair]
-                    del self.pair_locations[pair]
+                    # Use pop() to avoid KeyError if key doesn't exist
+                    self.pair_counts.pop(pair, None)
+                    self.pair_locations.pop(pair, None)
             
             # Create new pretoken by applying merge
             new_pretoken = self._replace_pair_in_pretoken(old_pretoken, old_pair, new_token)
             
             # Update pretoken counts
             del self.pretoken_counts[old_pretoken]
-            self.pretoken_counts[new_pretoken] = self.pretoken_counts.get(new_pretoken, 0) + count
+            if new_pretoken in self.pretoken_counts:
+                self.pretoken_counts[new_pretoken] += count
+            else:
+                self.pretoken_counts[new_pretoken] = count
             
             # Add new pairs to counts
             if new_pretoken not in self.special_byte_tuples:
-                for pair in self._get_pairs_in_pretoken(new_pretoken):
+                new_pairs = self._get_pairs_in_pretoken(new_pretoken)
+                for pair in new_pairs:
                     self.pair_counts[pair] += count
                     self.pair_locations[pair].add(new_pretoken)
 
@@ -173,10 +190,13 @@ class OptimizedBPETrainer:
         """Replace old_pair with new_token in pretoken."""
         result = []
         i = 0
-        while i < len(pretoken):
-            if (i < len(pretoken) - 1 and 
-                pretoken[i] == old_pair[0] and 
-                pretoken[i + 1] == old_pair[1]):
+        pretoken_len = len(pretoken)
+        old_left, old_right = old_pair
+        
+        while i < pretoken_len:
+            if (i < pretoken_len - 1 and 
+                pretoken[i] == old_left and 
+                pretoken[i + 1] == old_right):
                 result.append(new_token)
                 i += 2
             else:
@@ -188,12 +208,23 @@ class OptimizedBPETrainer:
         """Select the most frequent pair with lexicographic tie-breaking."""
         if not self.pair_counts:
             return None
-            
-        return max(self.pair_counts.keys(), key=lambda pair: (
-            self.pair_counts[pair],
-            self._get_token_bytes(pair[0]),
-            self._get_token_bytes(pair[1])
-        ))
+        
+        # Cache the max count to avoid multiple iterations
+        max_count = max(self.pair_counts.values())
+        
+        # Find best pair among those with max count
+        best_pair = None
+        best_key = None
+        
+        for pair, count in self.pair_counts.items():
+            if count == max_count:
+                # Create tie-breaking key
+                key = (self._get_token_bytes(pair[0]), self._get_token_bytes(pair[1]))
+                if best_key is None or key > best_key:
+                    best_pair = pair
+                    best_key = key
+        
+        return best_pair
 
     def train(self, pretokens):
         """Train BPE with optimized incremental updates."""
@@ -234,14 +265,14 @@ class BPETokenizer:
     def train(self):
         """Train the BPE tokenizer with optimized merging."""
         
-        # Use parallel pretokenization for large files
-        if os.path.getsize(self.input_path) > 10_000_000:  # 10MB threshold
+        # Skip multiprocessing for small files to avoid overhead
+        file_size = os.path.getsize(self.input_path)
+        if file_size > 50_000_000:  # 50MB threshold (increased from 10MB)
             pretokens = parallel_pretokenize(self.input_path, self.special_tokens)
         else:
             with open(self.input_path, "r", encoding="utf-8") as f:
                 text = f.read()
             pretokens = pretokenize(text, self.special_tokens)
-        
         
         # Train with optimized algorithm
         self.trainer.train(pretokens)
