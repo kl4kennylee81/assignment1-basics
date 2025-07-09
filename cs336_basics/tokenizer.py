@@ -51,6 +51,11 @@ class Tokenizer:
         self._rvocab = {v: k for k, v in vocab.items()}
         self.merges = merges
         self.special_tokens = special_tokens
+        # Create merge lookup table for O(1) access
+        self.merge_lookup = {}
+        for i, (left, right) in enumerate(merges):
+            pair = (left, right)
+            self.merge_lookup[pair] = i
 
     @classmethod
     def from_files(cls, vocab_filepath: str, merge_filepath:str, special_tokens: list[str] | None = None) -> "Tokenizer":
@@ -88,7 +93,7 @@ class Tokenizer:
                 else:
                     raise ValueError(f"Special token '{pretoken_str}' not found in vocabulary")
             else:
-                # Handle regular token - convert to individual bytes and apply merges
+                # Handle regular token - convert to individual bytes first
                 tokens = []
                 for byte_val in pretoken:
                     single_byte = bytes([byte_val])  # Convert int to bytes object
@@ -98,28 +103,41 @@ class Tokenizer:
                     else:
                         raise ValueError(f"Byte {single_byte} (ASCII {byte_val}) not found in vocabulary")
                 
-                # Apply merges to this pretoken
-                for left_bytes, right_bytes in self.merges:
-                    new_tokens = []
-                    i = 0
-                    while i < len(tokens):
-                        # Check if we can merge at position i
-                        if (i < len(tokens) - 1 and 
-                            self.vocab[tokens[i]] == left_bytes and 
-                            self.vocab[tokens[i + 1]] == right_bytes):
-                            # Merge: find token ID for merged bytes
-                            merged_bytes = left_bytes + right_bytes
-                            if merged_bytes in self._rvocab:
-                                merged_token_id = self._rvocab[merged_bytes]
-                                new_tokens.append(merged_token_id)
-                                i += 2  # Skip both tokens
-                            else:
-                                new_tokens.append(tokens[i])
-                                i += 1
-                        else:
-                            new_tokens.append(tokens[i])
-                            i += 1
-                    tokens = new_tokens
+                # Apply merges using efficient algorithm
+                while True:
+                    # Find the earliest merge available
+                    earliest_merge = None  # (position, merge_index)
+                    
+                    for i in range(len(tokens) - 1):
+                        # Get the byte pair at position i
+                        left_bytes = self.vocab[tokens[i]]
+                        right_bytes = self.vocab[tokens[i + 1]]
+                        pair = (left_bytes, right_bytes)
+                        
+                        # Check if this pair has a merge rule
+                        merge_index = self.merge_lookup.get(pair, -1)
+                        if merge_index != -1:
+                            # If this is the earliest merge found so far, save it
+                            if earliest_merge is None or merge_index < earliest_merge[1]:
+                                earliest_merge = (i, merge_index)
+                    
+                    # If no merge found, we're done
+                    if earliest_merge is None:
+                        break
+                    
+                    # Apply the earliest merge
+                    pos, merge_idx = earliest_merge
+                    left_bytes = self.vocab[tokens[pos]]
+                    right_bytes = self.vocab[tokens[pos + 1]]
+                    merged_bytes = left_bytes + right_bytes
+                    
+                    if merged_bytes in self._rvocab:
+                        merged_token_id = self._rvocab[merged_bytes]
+                        # Replace the two tokens with the merged token
+                        tokens = tokens[:pos] + [merged_token_id] + tokens[pos + 2:]
+                    else:
+                        # This shouldn't happen if vocab is consistent with merges
+                        break
                 
                 # Add processed tokens from this pretoken to final result
                 all_tokens.extend(tokens)
@@ -186,7 +204,7 @@ class Tokenizer:
                 for token_id in tokens:
                     yield token_id
 
-if __name__ == "__main__":
+def roundtrip_tinystories_sample():
     print("Loading tokenizer...")
     tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<endoftext>"])
     data_path = "data/tinystories_sample_5M.txt"
@@ -237,3 +255,6 @@ if __name__ == "__main__":
         print("✓ Round-trip encoding/decoding successful!")
     else:
         print("⚠ Warning: Decoded text doesn't match original")
+
+if __name__ == "__main__":
+  roundtrip_tinystories_sample()
