@@ -2,6 +2,10 @@ import regex as re
 import json
 import base64
 from typing import Iterable, Iterator
+import sys
+import numpy as np
+import os
+from tqdm import tqdm
 
 def pretokenize_for_encoding(text, special_tokens=None):
     """Tokenize text into a list of byte tuples for encoding."""
@@ -40,95 +44,38 @@ def pretokenize_for_encoding(text, special_tokens=None):
                 result.append(token_bytes)
     
     return result
+
 class Tokenizer:
-  def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
-      self.vocab = vocab
-      self._rvocab = {v: k for k, v in vocab.items()}
-      self.merges = merges
-      self.special_tokens = special_tokens
+    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
+        self.vocab = vocab
+        self._rvocab = {v: k for k, v in vocab.items()}
+        self.merges = merges
+        self.special_tokens = special_tokens
 
-  @classmethod
-  def from_files(cls, vocab_filepath: str, merge_filepath:str, special_tokens: list[str] | None = None) -> "Tokenizer":
-      with open(vocab_filepath, "r", encoding='utf-8') as f:
-          vocab_data = json.load(f)
-          vocab = {int(k): base64.b64decode(v.encode('utf-8')) for k, v in vocab_data.items()}       
+    @classmethod
+    def from_files(cls, vocab_filepath: str, merge_filepath:str, special_tokens: list[str] | None = None) -> "Tokenizer":
+        with open(vocab_filepath, "r", encoding='utf-8') as f:
+            vocab_data = json.load(f)
+            vocab = {int(k): base64.b64decode(v.encode('utf-8')) for k, v in vocab_data.items()}       
 
-      with open(merge_filepath, "r", encoding='utf-8') as f:
-        merges = []
-        for line in f:
-            parts = line.rstrip().split(" ")
-            if len(parts) == 2:
-                left = base64.b64decode(parts[0])
-                right = base64.b64decode(parts[1])
-                merges.append((left, right))
-      return Tokenizer(vocab, merges, special_tokens)
+        with open(merge_filepath, "r", encoding='utf-8') as f:
+            merges = []
+            for line in f:
+                parts = line.rstrip().split(" ")
+                if len(parts) == 2:
+                    left = base64.b64decode(parts[0])
+                    right = base64.b64decode(parts[1])
+                    merges.append((left, right))
+        return Tokenizer(vocab, merges, special_tokens)
 
-  def encode(self, text: str) -> list[int]:
-      # Get pretokens (each is a tuple of bytes)
-      pretokens = pretokenize_for_encoding(text, self.special_tokens)
-      all_tokens = []
-      
-      for pretoken in pretokens:
-          # Check if this pretoken is a special token
-          pretoken_bytes = bytes(pretoken)
-          pretoken_str = pretoken_bytes.decode('utf-8', errors='ignore')
-          
-          if self.special_tokens and pretoken_str in self.special_tokens:
-              # Handle special token - look it up directly in vocab
-              if pretoken_bytes in self._rvocab:
-                  special_token_id = self._rvocab[pretoken_bytes]
-                  all_tokens.append(special_token_id)
-              else:
-                  raise ValueError(f"Special token '{pretoken_str}' not found in vocabulary")
-          else:
-              # Handle regular token - convert to individual bytes and apply merges
-              tokens = []
-              for byte_val in pretoken:
-                  single_byte = bytes([byte_val])  # Convert int to bytes object
-                  if single_byte in self._rvocab:
-                      token_id = self._rvocab[single_byte]
-                      tokens.append(token_id)
-                  else:
-                      raise ValueError(f"Byte {single_byte} (ASCII {byte_val}) not found in vocabulary")
-              
-              # Apply merges to this pretoken
-              for left_bytes, right_bytes in self.merges:
-                  new_tokens = []
-                  i = 0
-                  while i < len(tokens):
-                      # Check if we can merge at position i
-                      if (i < len(tokens) - 1 and 
-                          self.vocab[tokens[i]] == left_bytes and 
-                          self.vocab[tokens[i + 1]] == right_bytes):
-                          # Merge: find token ID for merged bytes
-                          merged_bytes = left_bytes + right_bytes
-                          if merged_bytes in self._rvocab:
-                              merged_token_id = self._rvocab[merged_bytes]
-                              new_tokens.append(merged_token_id)
-                              i += 2  # Skip both tokens
-                          else:
-                              new_tokens.append(tokens[i])
-                              i += 1
-                      else:
-                          new_tokens.append(tokens[i])
-                          i += 1
-                  tokens = new_tokens
-              
-              # Add processed tokens from this pretoken to final result
-              all_tokens.extend(tokens)
-      
-      return all_tokens
-
-  def decode(self, ids: list[int]) -> str:
-      decoded_bytes = b''.join(self.vocab[id] for id in ids)
-      return decoded_bytes.decode("utf-8", errors="replace")
-
-  def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-    for chunk in iterable:
-        # Use your existing pretokenize_for_encoding function
-        pretokens = pretokenize_for_encoding(chunk, self.special_tokens)
+    def encode(self, text: str) -> list[int]:
+        # Get pretokens (each is a tuple of bytes)
+        print("Pretokenizing...")
+        pretokens = pretokenize_for_encoding(text, self.special_tokens)
+        all_tokens = []
         
-        for pretoken in pretokens:
+        # Add progress bar for processing pretokens
+        for pretoken in tqdm(pretokens, desc="Encoding pretokens", unit="pretoken"):
             # Check if this pretoken is a special token
             pretoken_bytes = bytes(pretoken)
             pretoken_str = pretoken_bytes.decode('utf-8', errors='ignore')
@@ -137,44 +84,156 @@ class Tokenizer:
                 # Handle special token - look it up directly in vocab
                 if pretoken_bytes in self._rvocab:
                     special_token_id = self._rvocab[pretoken_bytes]
-                    yield special_token_id
+                    all_tokens.append(special_token_id)
                 else:
                     raise ValueError(f"Special token '{pretoken_str}' not found in vocabulary")
-                continue
-            
-            # Handle regular token - convert to individual bytes first
-            tokens = []
-            for byte_val in pretoken:
-                single_byte = bytes([byte_val])  # Convert int to bytes object
-                if single_byte in self._rvocab:
-                    token_id = self._rvocab[single_byte]
-                    tokens.append(token_id)
-                else:
-                    raise ValueError(f"Byte {single_byte} (ASCII {byte_val}) not found in vocabulary")
-            
-            # Apply merges to this pretoken
-            for left_bytes, right_bytes in self.merges:
-                new_tokens = []
-                i = 0
-                while i < len(tokens):
-                    # Check if we can merge at position i
-                    if (i < len(tokens) - 1 and 
-                        self.vocab[tokens[i]] == left_bytes and 
-                        self.vocab[tokens[i + 1]] == right_bytes):
-                        # Merge: find token ID for merged bytes
-                        merged_bytes = left_bytes + right_bytes
-                        if merged_bytes in self._rvocab:
-                            merged_token_id = self._rvocab[merged_bytes]
-                            new_tokens.append(merged_token_id)
-                            i += 2  # Skip both tokens
+            else:
+                # Handle regular token - convert to individual bytes and apply merges
+                tokens = []
+                for byte_val in pretoken:
+                    single_byte = bytes([byte_val])  # Convert int to bytes object
+                    if single_byte in self._rvocab:
+                        token_id = self._rvocab[single_byte]
+                        tokens.append(token_id)
+                    else:
+                        raise ValueError(f"Byte {single_byte} (ASCII {byte_val}) not found in vocabulary")
+                
+                # Apply merges to this pretoken
+                for left_bytes, right_bytes in self.merges:
+                    new_tokens = []
+                    i = 0
+                    while i < len(tokens):
+                        # Check if we can merge at position i
+                        if (i < len(tokens) - 1 and 
+                            self.vocab[tokens[i]] == left_bytes and 
+                            self.vocab[tokens[i + 1]] == right_bytes):
+                            # Merge: find token ID for merged bytes
+                            merged_bytes = left_bytes + right_bytes
+                            if merged_bytes in self._rvocab:
+                                merged_token_id = self._rvocab[merged_bytes]
+                                new_tokens.append(merged_token_id)
+                                i += 2  # Skip both tokens
+                            else:
+                                new_tokens.append(tokens[i])
+                                i += 1
                         else:
                             new_tokens.append(tokens[i])
                             i += 1
-                    else:
-                        new_tokens.append(tokens[i])
-                        i += 1
-                tokens = new_tokens
+                    tokens = new_tokens
+                
+                # Add processed tokens from this pretoken to final result
+                all_tokens.extend(tokens)
+        
+        return all_tokens
+
+    def decode(self, ids: list[int]) -> str:
+        decoded_bytes = b''.join(self.vocab[id] for id in ids)
+        return decoded_bytes.decode("utf-8", errors="replace")
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        for chunk in iterable:
+            # Use your existing pretokenize_for_encoding function
+            pretokens = pretokenize_for_encoding(chunk, self.special_tokens)
             
-            # Yield the processed tokens from this pretoken
-            for token_id in tokens:
-                yield token_id
+            for pretoken in pretokens:
+                # Check if this pretoken is a special token
+                pretoken_bytes = bytes(pretoken)
+                pretoken_str = pretoken_bytes.decode('utf-8', errors='ignore')
+                
+                if self.special_tokens and pretoken_str in self.special_tokens:
+                    # Handle special token - look it up directly in vocab
+                    if pretoken_bytes in self._rvocab:
+                        special_token_id = self._rvocab[pretoken_bytes]
+                        yield special_token_id
+                    else:
+                        raise ValueError(f"Special token '{pretoken_str}' not found in vocabulary")
+                    continue
+                
+                # Handle regular token - convert to individual bytes first
+                tokens = []
+                for byte_val in pretoken:
+                    single_byte = bytes([byte_val])  # Convert int to bytes object
+                    if single_byte in self._rvocab:
+                        token_id = self._rvocab[single_byte]
+                        tokens.append(token_id)
+                    else:
+                        raise ValueError(f"Byte {single_byte} (ASCII {byte_val}) not found in vocabulary")
+                
+                # Apply merges to this pretoken
+                for left_bytes, right_bytes in self.merges:
+                    new_tokens = []
+                    i = 0
+                    while i < len(tokens):
+                        # Check if we can merge at position i
+                        if (i < len(tokens) - 1 and 
+                            self.vocab[tokens[i]] == left_bytes and 
+                            self.vocab[tokens[i + 1]] == right_bytes):
+                            # Merge: find token ID for merged bytes
+                            merged_bytes = left_bytes + right_bytes
+                            if merged_bytes in self._rvocab:
+                                merged_token_id = self._rvocab[merged_bytes]
+                                new_tokens.append(merged_token_id)
+                                i += 2  # Skip both tokens
+                            else:
+                                new_tokens.append(tokens[i])
+                                i += 1
+                        else:
+                            new_tokens.append(tokens[i])
+                            i += 1
+                    tokens = new_tokens
+                
+                # Yield the processed tokens from this pretoken
+                for token_id in tokens:
+                    yield token_id
+
+if __name__ == "__main__":
+    print("Loading tokenizer...")
+    tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<endoftext>"])
+    data_path = "data/tinystories_sample_5M.txt"
+    
+    # Get original file size
+    original_size = os.path.getsize("data/tinystories_sample_5M.txt")
+    print(f"File size: {original_size:,} bytes ({original_size / (1024*1024):.2f} MB)")
+    
+    # Read file with progress
+    print("Reading file...")
+    with open(data_path, "r", encoding="utf-8") as f:
+        text = f.read()
+    
+    print("Encoding text...")
+    encoded = tokenizer.encode(text)
+    
+    print("Saving to NumPy array...")
+    # Save as NumPy array
+    encoded_array = np.array(encoded, dtype=np.uint16)
+    np.save("output/encoded.npy", encoded_array)
+    
+    # Get encoded file size
+    encoded_size = os.path.getsize("output/encoded.npy")
+    
+    print(f"\nResults:")
+    print(f"Original file size: {original_size:,} bytes ({original_size / (1024*1024):.2f} MB)")
+    print(f"Encoded file size: {encoded_size:,} bytes ({encoded_size / (1024*1024):.2f} MB)")
+    print(f"Compression ratio: {original_size / encoded_size:.2f}x")
+    print(f"Saved {len(encoded):,} tokens to output/encoded.npy")
+    
+    # Read the file back in
+    print("\nVerifying round-trip...")
+    loaded_tokens = np.load("output/encoded.npy")
+    
+    # Convert back to Python list of ints for decoding
+    token_ids = loaded_tokens.tolist()
+    
+    # Decode back to text
+    print("Decoding...")
+    decoded_text = tokenizer.decode(token_ids)
+    
+    print(f"Loaded {len(loaded_tokens):,} tokens from output/encoded.npy")
+    print(f"Decoded text preview (first 500 chars):")
+    print(repr(decoded_text[:500]))
+    
+    # Verify round-trip works
+    if decoded_text == text:
+        print("✓ Round-trip encoding/decoding successful!")
+    else:
+        print("⚠ Warning: Decoded text doesn't match original")
