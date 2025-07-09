@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from cs336_basics.train_bpe import TrainBPE
 
-def train_and_profile(data_path):
+def train_and_profile(data_path, vocab_size=10000):
     """Train BPE tokenizer with profiling and analysis."""
     
     if not Path(data_path).exists():
@@ -23,10 +23,9 @@ def train_and_profile(data_path):
     
     # Memory and time tracking
     process = psutil.Process(os.getpid())
-    initial_memory = process.memory_info().rss / (1024**3)
     
     # Initialize tokenizer
-    tokenizer = TrainBPE(data_path, vocab_size=10000, special_tokens=["<|endoftext|>"])
+    tokenizer = TrainBPE(data_path, vocab_size=vocab_size, special_tokens=["<|endoftext|>"])
     
     # Profile training
     profiler = cProfile.Profile()
@@ -72,10 +71,16 @@ def train_and_profile(data_path):
           f"which took {func_time_pct:.1f}% of the total training time.")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python train_tinystories.py <data_path>")
-        print("Example: python train_tinystories.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt")
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
+        print("Usage: python train_tinystories.py <data_path> [vocab_size]")
+        print("Examples:")
+        print("  python train_tinystories.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt")
+        print("  python train_tinystories.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt 5000")
+        print("  python train_tinystories.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt 20000")
         sys.exit(1)
     
     data_path = sys.argv[1]
-    train_and_profile(data_path)
+    vocab_size = int(sys.argv[2]) if len(sys.argv) == 3 else 10000
+    
+    print(f"Training BPE tokenizer with vocab_size={vocab_size}")
+    train_and_profile(data_path, vocab_size)
