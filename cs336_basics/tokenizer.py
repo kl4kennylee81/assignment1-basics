@@ -124,18 +124,6 @@ class Tokenizer:
       return decoded_bytes.decode("utf-8", errors="replace")
 
   def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-    """
-    Given an iterable of strings, return a generator that lazily yields token IDs.
-    
-    This method processes the input chunk by chunk to maintain constant memory usage
-    while ensuring tokens don't get split across chunk boundaries by using pretokenization.
-    
-    Args:
-        iterable: An iterable of strings (e.g., file handle, list of strings)
-        
-    Yields:
-        int: Token IDs
-    """
     for chunk in iterable:
         # Use your existing pretokenize_for_encoding function
         pretokens = pretokenize_for_encoding(chunk, self.special_tokens)
