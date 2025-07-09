@@ -3,7 +3,6 @@ from collections import defaultdict, Counter
 import multiprocessing as mp
 import os
 from typing import BinaryIO
-import heapq
 import time
 from tqdm import tqdm
 
@@ -125,6 +124,24 @@ def parallel_pretokenize(filepath, special_tokens):
     print(f"Found {len(combined_result)} unique tokens from {sum(combined_result.values())} total tokens")
     return combined_result
 
+def replace_pair_in_pretoken(pretoken, old_pair, new_token):
+    """Replace old_pair with new_token in pretoken."""
+    result = []
+    i = 0
+    pretoken_len = len(pretoken)
+    old_left, old_right = old_pair
+    
+    while i < pretoken_len:
+        if (i < pretoken_len - 1 and 
+            pretoken[i] == old_left and 
+            pretoken[i + 1] == old_right):
+            result.append(new_token)
+            i += 2
+        else:
+            result.append(pretoken[i])
+            i += 1
+    return tuple(result)
+
 class OptimizedBPETrainer:
     """Optimized BPE trainer with incremental pair count updates."""
     
@@ -215,7 +232,7 @@ class OptimizedBPETrainer:
                     self.pair_locations.pop(pair, None)
             
             # Create new pretoken by applying merge
-            new_pretoken = self._replace_pair_in_pretoken(old_pretoken, old_pair, new_token)
+            new_pretoken = replace_pair_in_pretoken(old_pretoken, old_pair, new_token)
             
             # Update pretoken counts
             del self.pretoken_counts[old_pretoken]
@@ -230,24 +247,6 @@ class OptimizedBPETrainer:
                 for pair in new_pairs:
                     self.pair_counts[pair] += count
                     self.pair_locations[pair].add(new_pretoken)
-
-    def _replace_pair_in_pretoken(self, pretoken, old_pair, new_token):
-        """Replace old_pair with new_token in pretoken."""
-        result = []
-        i = 0
-        pretoken_len = len(pretoken)
-        old_left, old_right = old_pair
-        
-        while i < pretoken_len:
-            if (i < pretoken_len - 1 and 
-                pretoken[i] == old_left and 
-                pretoken[i + 1] == old_right):
-                result.append(new_token)
-                i += 2
-            else:
-                result.append(pretoken[i])
-                i += 1
-        return tuple(result)
 
     def _select_best_pair(self):
         """Select the most frequent pair with lexicographic tie-breaking."""
