@@ -1,0 +1,204 @@
+Loading tokenizer...
+File size: 5,242,880 bytes (5.00 MB)
+Reading file...
+Encoding text...
+Pretokenizing...
+Saving to NumPy array...
+
+Results:
+Original file size: 5,242,880 bytes (5.00 MB)
+Encoded file size: 2,638,776 bytes (2.52 MB)
+Compression ratio: 1.99x
+Saved 1,319,324 tokens to output/encoded.npy
+
+Verifying round-trip...
+Decoding...
+Loaded 1,319,324 tokens from output/encoded.npy
+Decoded text preview (first 500 chars):
+'u don\'t have to be scared of the loud dog, I\'ll protect you". The mole felt so safe with the little girl. She was very kind and the mole soon came to trust her. He leaned against her and she kept him safe. The mole had found his best friend.\n<|endoftext|>\nOnce upon a time, in a warm and sunny place, there was a big pit. A little boy named Tom liked to play near the pit. One day, Tom lost his red ball. He was very sad.\nTom asked his friend, Sam, to help him search for the ball. They looked high a'
+✓ Round-trip encoding/decoding successful!
+Wrote profile results to tokenizer.py.lprof
+Timer unit: 1e-06 s
+
+Total time: 6.62462 s
+File: cs336_basics/tokenizer.py
+Function: pretokenize_for_encoding at line 10
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    10                                           @profile
+    11                                           def pretokenize_for_encoding(text, special_tokens=None):
+    12                                               """Tokenize text into a list of byte tuples for encoding."""
+    13         1       8674.0   8674.0      0.1      pattern = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+    14                                               
+    15         1          1.0      1.0      0.0      if not special_tokens:
+    16                                                   # Fast path for no special tokens
+    17                                                   matches = list(pattern.finditer(text))
+    18                                                   result = []
+    19                                                   for match in matches:
+    20                                                       token_bytes = tuple(match.group(0).encode("utf-8"))
+    21                                                       result.append(token_bytes)
+    22                                                   return result
+    23                                               
+    24                                               # Sort special tokens by length (longest first) to handle overlapping tokens correctly
+    25         1          6.0      6.0      0.0      special_tokens_sorted = sorted(special_tokens, key=len, reverse=True)
+    26         1          4.0      4.0      0.0      special_tokens_set = set(special_tokens)
+    27                                               
+    28                                               # Create pattern that matches longest tokens first
+    29         1         56.0     56.0      0.0      special_pattern = '|'.join(re.escape(token) for token in special_tokens_sorted)
+    30                                               
+    31                                               # Split text on special tokens
+    32         1       5203.0   5203.0      0.1      text_segments = re.split(f'({special_pattern})', text)
+    33                                               
+    34         1          2.0      2.0      0.0      result = []
+    35         2          3.0      1.5      0.0      for segment in text_segments:
+    36         1          1.0      1.0      0.0          if not segment:
+    37                                                       continue
+    38         1       4979.0   4979.0      0.1          if segment in special_tokens_set:
+    39                                                       result.append(tuple(segment.encode("utf-8")))
+    40                                                   else:
+    41                                                       # Process regular text segments
+    42         1    1955553.0    2e+06     29.5              matches = list(pattern.finditer(segment))
+    43   1282525    1132112.0      0.9     17.1              for match in matches:
+    44   1282524    2672361.0      2.1     40.3                  token_bytes = tuple(match.group(0).encode("utf-8"))
+    45   1282524     845658.0      0.7     12.8                  result.append(token_bytes)
+    46                                               
+    47         1          3.0      3.0      0.0      return result
+
+Total time: 206.631 s
+File: cs336_basics/tokenizer.py
+Function: encode at line 77
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    77                                               @profile
+    78                                               def encode(self, text: str) -> list[int]:
+    79                                                   # Get pretokens (each is a tuple of bytes)
+    80         1          4.0      4.0      0.0          print("Pretokenizing...")
+    81         1   10449494.0    1e+07      5.1          pretokens = pretokenize_for_encoding(text, self.special_tokens)
+    82         1          2.0      2.0      0.0          all_tokens = []
+    83                                                   
+    84                                                   # Add progress bar for processing pretokens
+    85   1282525   13681929.0     10.7      6.6          for pretoken in tqdm(pretokens, desc="Encoding pretokens", unit="pretoken"):
+    86                                                       # Check if this pretoken is a special token
+    87   1282524    3004345.0      2.3      1.5              pretoken_bytes = bytes(pretoken)
+    88   1282524    3060241.0      2.4      1.5              pretoken_str = pretoken_bytes.decode('utf-8', errors='ignore')
+    89                                                       
+    90   1282524    2148249.0      1.7      1.0              if self.special_tokens and pretoken_str in self.special_tokens:
+    91                                                           # Handle special token - look it up directly in vocab
+    92                                                           if pretoken_bytes in self._rvocab:
+    93                                                               special_token_id = self._rvocab[pretoken_bytes]
+    94                                                               all_tokens.append(special_token_id)
+    95                                                           else:
+    96                                                               raise ValueError(f"Special token '{pretoken_str}' not found in vocabulary")
+    97                                                       else:
+    98                                                           # Handle regular token - convert to individual bytes first
+    99   1282524    1168488.0      0.9      0.6                  tokens = []
+   100   6525404    7497632.0      1.1      3.6                  for byte_val in pretoken:
+   101   5242880    8285036.0      1.6      4.0                      single_byte = bytes([byte_val])  # Convert int to bytes object
+   102   5242880    5970483.0      1.1      2.9                      if single_byte in self._rvocab:
+   103   5242880    4320484.0      0.8      2.1                          token_id = self._rvocab[single_byte]
+   104   5242880    4206497.0      0.8      2.0                          tokens.append(token_id)
+   105                                                               else:
+   106                                                                   raise ValueError(f"Byte {single_byte} (ASCII {byte_val}) not found in vocabulary")
+   107                                                           
+   108                                                           # Apply merges using efficient algorithm
+   109   5206080    4333734.0      0.8      2.1                  while True:
+   110                                                               # Find the earliest merge available
+   111   5206080    3939862.0      0.8      1.9                      earliest_merge = None  # (position, merge_index)
+   112                                                               
+   113  16013185   25234808.0      1.6     12.2                      for i in range(len(tokens) - 1):
+   114                                                                   # Get the byte pair at position i
+   115  10807105    9319822.0      0.9      4.5                          left_bytes = self.vocab[tokens[i]]
+   116  10807105    9790734.0      0.9      4.7                          right_bytes = self.vocab[tokens[i + 1]]
+   117  10807105    9332223.0      0.9      4.5                          pair = (left_bytes, right_bytes)
+   118                                                                   
+   119                                                                   # Check if this pair has a merge rule
+   120  10807105   14561108.0      1.3      7.0                          merge_index = self.merge_lookup.get(pair, -1)
+   121  10807105   10719987.0      1.0      5.2                          if merge_index != -1:
+   122                                                                       # If this is the earliest merge found so far, save it
+   123   8935905   10180469.0      1.1      4.9                              if earliest_merge is None or merge_index < earliest_merge[1]:
+   124   5200153    3985238.0      0.8      1.9                                  earliest_merge = (i, merge_index)
+   125                                                               
+   126                                                               # If no merge found, we're done
+   127   5206080    4469554.0      0.9      2.2                      if earliest_merge is None:
+   128   1282524     810001.0      0.6      0.4                          break
+   129                                                               
+   130                                                               # Apply the earliest merge
+   131   3923556    2857424.0      0.7      1.4                      pos, merge_idx = earliest_merge
+   132   3923556    3299167.0      0.8      1.6                      left_bytes = self.vocab[tokens[pos]]
+   133   3923556    3089428.0      0.8      1.5                      right_bytes = self.vocab[tokens[pos + 1]]
+   134   3923556    4886071.0      1.2      2.4                      merged_bytes = left_bytes + right_bytes
+   135                                                               
+   136   3923556    6313196.0      1.6      3.1                      if merged_bytes in self._rvocab:
+   137   3923556    3745735.0      1.0      1.8                          merged_token_id = self._rvocab[merged_bytes]
+   138                                                                   # Replace the two tokens with the merged token
+   139   3923556   10279657.0      2.6      5.0                          tokens = tokens[:pos] + [merged_token_id] + tokens[pos + 2:]
+   140                                                               else:
+   141                                                                   # This shouldn't happen if vocab is consistent with merges
+   142                                                                   break
+   143                                                           
+   144                                                           # Add processed tokens from this pretoken to final result
+   145   1282524    1690237.0      1.3      0.8                  all_tokens.extend(tokens)
+   146                                                   
+   147         1         14.0     14.0      0.0          return all_tokens
+
+Total time: 398.423 s
+File: cs336_basics/tokenizer.py
+Function: roundtrip_tinystories_sample at line 209
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   209                                           @profile
+   210                                           def roundtrip_tinystories_sample():
+   211         1         14.0     14.0      0.0      print("Loading tokenizer...")
+   212         1     262051.0 262051.0      0.1      tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<endoftext>"])
+   213         1          1.0      1.0      0.0      data_path = "data/tinystories_sample_5M.txt"
+   214                                               
+   215                                               # Get original file size
+   216         1         56.0     56.0      0.0      original_size = os.path.getsize("data/tinystories_sample_5M.txt")
+   217         1         21.0     21.0      0.0      print(f"File size: {original_size:,} bytes ({original_size / (1024*1024):.2f} MB)")
+   218                                               
+   219                                               # Read file with progress
+   220         1          2.0      2.0      0.0      print("Reading file...")
+   221         2        157.0     78.5      0.0      with open(data_path, "r", encoding="utf-8") as f:
+   222         1      29728.0  29728.0      0.0          text = f.read()
+   223                                               
+   224         1          8.0      8.0      0.0      print("Encoding text...")
+   225         1  395897235.0    4e+08     99.4      encoded = tokenizer.encode(text)
+   226                                               
+   227         1         61.0     61.0      0.0      print("Saving to NumPy array...")
+   228                                               # Save as NumPy array
+   229         1     156993.0 156993.0      0.0      encoded_array = np.array(encoded, dtype=np.uint16)
+   230         1     105842.0 105842.0      0.0      np.save("output/encoded.npy", encoded_array)
+   231                                               
+   232                                               # Get encoded file size
+   233         1        370.0    370.0      0.0      encoded_size = os.path.getsize("output/encoded.npy")
+   234                                               
+   235         1         10.0     10.0      0.0      print(f"\nResults:")
+   236         1         23.0     23.0      0.0      print(f"Original file size: {original_size:,} bytes ({original_size / (1024*1024):.2f} MB)")
+   237         1          9.0      9.0      0.0      print(f"Encoded file size: {encoded_size:,} bytes ({encoded_size / (1024*1024):.2f} MB)")
+   238         1         20.0     20.0      0.0      print(f"Compression ratio: {original_size / encoded_size:.2f}x")
+   239         1         21.0     21.0      0.0      print(f"Saved {len(encoded):,} tokens to output/encoded.npy")
+   240                                               
+   241                                               # Read the file back in
+   242         1          2.0      2.0      0.0      print("\nVerifying round-trip...")
+   243         1       7644.0   7644.0      0.0      loaded_tokens = np.load("output/encoded.npy")
+   244                                               
+   245                                               # Convert back to Python list of ints for decoding
+   246         1     125279.0 125279.0      0.0      token_ids = loaded_tokens.tolist()
+   247                                               
+   248                                               # Decode back to text
+   249         1         15.0     15.0      0.0      print("Decoding...")
+   250         1    1809748.0    2e+06      0.5      decoded_text = tokenizer.decode(token_ids)
+   251                                               
+   252         1         24.0     24.0      0.0      print(f"Loaded {len(loaded_tokens):,} tokens from output/encoded.npy")
+   253         1          2.0      2.0      0.0      print(f"Decoded text preview (first 500 chars):")
+   254         1         46.0     46.0      0.0      print(repr(decoded_text[:500]))
+   255                                               
+   256                                               # Verify round-trip works
+   257         1      27608.0  27608.0      0.0      if decoded_text == text:
+   258         1         42.0     42.0      0.0          print("✓ Round-trip encoding/decoding successful!")
+   259                                               else:
+   260                                                   print("⚠ Warning: Decoded text doesn't match original")
+
