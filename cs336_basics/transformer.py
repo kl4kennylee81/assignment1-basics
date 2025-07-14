@@ -1,3 +1,6 @@
+from jaxtyping import Float, Int
+import numpy.typing as npt
+from torch import Tensor
 import numpy as np
 import torch
 import torch.nn as nn
@@ -94,4 +97,17 @@ def softmax(x: torch.Tensor, dim: int):
     sum_x_exp = torch.sum(x_exp, dim=dim, keepdim=True)
     result = x_exp / sum_x_exp
     return result
+
+def scaled_dot_product_attention(
+    Q: Float[Tensor, " ... queries d_k"],
+    K: Float[Tensor, " ... keys d_k"],
+    V: Float[Tensor, " ... values d_v"],
+    mask: Float[Tensor, " ... queries keys"] | None = None,
+) -> Float[Tensor, " ... queries d_v"]:
+    wei = einsum(Q, K, "... queries d_k, ... keys d_k -> ... queries keys") / (Q.shape[-1] ** 0.5)
+    if mask is not None:
+        wei = wei.masked_fill(mask == 0, float('-inf'))
+    wei = softmax(wei, dim=-1)
+    return einsum(wei, V, "... queries keys, ... keys d_v -> ... queries d_v")
+    
 
