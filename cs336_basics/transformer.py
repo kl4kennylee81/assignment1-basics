@@ -47,3 +47,22 @@ class RMSNorm(nn.Module):
         x_normalized = x / rms
         result = einsum(x_normalized, self.G, "... d_model, d_model -> ... d_model")
         return result.to(in_dtype)
+
+class SWIGLU(nn.Module):
+
+    def __init__(self, d_model: int, d_ff: int, device: torch.device | None = None, dtype: torch.dtype | None =None):
+        super().__init__()
+        self.W1 = Linear(d_model, d_ff, device, dtype)
+        self.W3 = Linear(d_model, d_ff, device, dtype)
+        self.W2 = Linear(d_ff, d_model, device, dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w1x = self.W1(x)
+        silux = w1x * torch.sigmoid(w1x)
+        w3x = self.W3(x)
+        elew1w3 = silux * w3x
+        return self.W2(elew1w3)
+        
+
+
+        

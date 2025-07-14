@@ -74,9 +74,9 @@ if __name__ == "__main__":
     if len(sys.argv) < 2 or len(sys.argv) > 3:
         print("Usage: python train_tinystories.py <data_path> [vocab_size]")
         print("Examples:")
-        print("  python train_tinystories.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt")
-        print("  python train_tinystories.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt 5000")
-        print("  python train_tinystories.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt 20000")
+        print("  python train_bpe_file.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt")
+        print("  python train_bpe_file.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt 5000")
+        print("  python train_bpe_file.py /Users/kennethlee/Documents/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt 20000")
         sys.exit(1)
     
     data_path = sys.argv[1]

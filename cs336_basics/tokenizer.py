@@ -7,7 +7,6 @@ import numpy as np
 import os
 from tqdm import tqdm
 
-@profile
 def pretokenize_for_encoding(text, special_tokens=None):
     """Tokenize text into a list of byte tuples for encoding."""
     pattern = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
@@ -74,7 +73,6 @@ class Tokenizer:
                     merges.append((left, right))
         return Tokenizer(vocab, merges, special_tokens)
 
-    @profile
     def encode(self, text: str) -> list[int]:
         # Get pretokens (each is a tuple of bytes)
         print("Pretokenizing...")
@@ -206,7 +204,6 @@ class Tokenizer:
                 for token_id in tokens:
                     yield token_id
 
-@profile
 def roundtrip_tinystories_sample():
     print("Loading tokenizer...")
     tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<endoftext>"])
