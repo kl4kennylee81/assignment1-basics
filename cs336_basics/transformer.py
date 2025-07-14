@@ -85,3 +85,13 @@ class RotaryPositionalEmbedding(nn.Module):
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
         ri_token_pos = self.r[token_positions]
         return einsum(x, ri_token_pos, "... seq d_k_in, seq d_k_out d_k_in -> ... seq d_k_out")
+    
+
+def softmax(x: torch.Tensor, dim: int):
+    max_xi = torch.amax(x, dim=dim, keepdim=True)
+    x_shifted = x - max_xi
+    x_exp = torch.exp(x_shifted)
+    sum_x_exp = torch.sum(x_exp, dim=dim, keepdim=True)
+    result = x_exp / sum_x_exp
+    return result
+
