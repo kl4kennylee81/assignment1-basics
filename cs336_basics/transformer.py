@@ -64,5 +64,24 @@ class SWIGLU(nn.Module):
         return self.W2(elew1w3)
         
 
-
+class RotaryPositionalEmbedding(nn.Module):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+        super().__init__()
+        self.r = torch.zeros(max_seq_len, d_k, d_k, device=device)
         
+        for i in range(max_seq_len):
+            for k in range(d_k//2):
+                freq = 1.0 / (theta ** (2*k / d_k))
+                angle = i * freq
+                
+                cos_val = torch.cos(torch.tensor(angle, device=device))
+                sin_val = torch.sin(torch.tensor(angle, device=device))
+                
+                self.r[i, 2*k, 2*k] = cos_val
+                self.r[i, 2*k, 2*k+1] = -sin_val
+                self.r[i, 2*k+1, 2*k] = sin_val
+                self.r[i, 2*k+1, 2*k+1] = cos_val
+                
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+        ri_token_pos = self.r[token_positions]
+        return einsum(x, ri_token_pos, "... seq d_k_in, seq d_k_out d_k_in -> ... seq d_k_out")
