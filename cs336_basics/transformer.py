@@ -148,6 +148,25 @@ class TransformerBlock(nn.Module):
         self.ln2 = RMSNorm(d_model, device=device)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
+        if token_positions == None:
+            token_positions = torch.arange(x.shape[1])
         x = x + self.mha(self.ln1(x), token_positions)
         x = x + self.ffn(self.ln2(x))
         return x
+    
+class Transformer(nn.Module):
+    def __init__(self, vocab_size:int, context_length:int, num_layers:int, d_model:int, num_heads:int, d_ff:int, rope_theta=None, device=None):
+        super().__init__()
+        self.emb = Embedding(vocab_size, d_model, device)
+        d_k = d_model // num_heads
+        self.rope = RotaryPositionalEmbedding(rope_theta, d_k, context_length, device)
+        self.blocks = nn.Sequential(*[TransformerBlock(d_model, num_heads, d_ff, device, self.rope) for _ in range(num_layers)])
+        self.lnf = RMSNorm(d_model, device=device)
+        self.lm_head = Linear(d_model, vocab_size, device=device)
+
+    def forward(self, x:torch.Tensor):
+        tok_emb = self.emb(x)
+        block_out = self.blocks(tok_emb)
+        norm_out = self.lnf(block_out)
+        logits = self.lm_head(norm_out)
+        return logits

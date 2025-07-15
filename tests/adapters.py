@@ -8,10 +8,11 @@ from jaxtyping import Float, Int
 import numpy.typing as npt
 import torch
 from torch import Tensor
+import torch.nn as nn
 
 from cs336_basics.train_bpe import TrainBPE
 from cs336_basics.tokenizer import Tokenizer
-from cs336_basics.transformer import Linear, Embedding, RMSNorm, SWIGLU, RotaryPositionalEmbedding, softmax, scaled_dot_product_attention, MultiheadAttention, TransformerBlock
+from cs336_basics.transformer import Linear, Embedding, RMSNorm, SWIGLU, RotaryPositionalEmbedding, softmax, scaled_dot_product_attention, MultiheadAttention, TransformerBlock, Transformer
 
 
 
@@ -394,7 +395,23 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    lm = Transformer(vocab_size=vocab_size, context_length=context_length, num_layers=num_layers, d_model=d_model, num_heads=num_heads, d_ff=d_ff, rope_theta=rope_theta, device=device)
+    lm.emb.load_state_dict({"W": weights["token_embeddings.weight"]})
+    for i in range(len(lm.blocks)):
+        block = lm.blocks[i]
+        block.mha.Q.load_state_dict({"W": weights[f"layers.{i}.attn.q_proj.weight"]})
+        block.mha.K.load_state_dict({"W": weights[f"layers.{i}.attn.k_proj.weight"]})
+        block.mha.V.load_state_dict({"W": weights[f"layers.{i}.attn.v_proj.weight"]})
+        block.mha.Wo.load_state_dict({"W": weights[f"layers.{i}.attn.output_proj.weight"]})
+        block.ln1.load_state_dict({"G": weights[f"layers.{i}.ln1.weight"]})
+        block.ln2.load_state_dict({"G": weights[f"layers.{i}.ln2.weight"]})
+        block.ffn.W1.load_state_dict({"W": weights[f"layers.{i}.ffn.w1.weight"]})
+        block.ffn.W2.load_state_dict({"W": weights[f"layers.{i}.ffn.w2.weight"]})
+        block.ffn.W3.load_state_dict({"W": weights[f"layers.{i}.ffn.w3.weight"]})
+    lm.lnf.load_state_dict({"G": weights["ln_final.weight"]})
+    lm.lm_head.load_state_dict({"W": weights["lm_head.weight"]})
+    return lm(in_indices)
 
 
 def run_rmsnorm(
