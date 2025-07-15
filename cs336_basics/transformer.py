@@ -56,8 +56,8 @@ class SWIGLU(nn.Module):
     def __init__(self, d_model: int, d_ff: int, device: torch.device | None = None, dtype: torch.dtype | None =None):
         super().__init__()
         self.W1 = Linear(d_model, d_ff, device, dtype)
-        self.W3 = Linear(d_model, d_ff, device, dtype)
         self.W2 = Linear(d_ff, d_model, device, dtype)
+        self.W3 = Linear(d_model, d_ff, device, dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         w1x = self.W1(x)
@@ -138,3 +138,16 @@ class MultiheadAttention(nn.Module):
         attn = rearrange(attn, "... num_heads seq dv -> ... seq (num_heads dv)")
         return self.Wo(attn)
 
+
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, device=None, rope=None):
+        super().__init__()
+        self.mha = MultiheadAttention(d_model, num_heads, device=device, rope=rope)
+        self.ffn = SWIGLU(d_model, d_ff, device=device)
+        self.ln1 = RMSNorm(d_model, device=device)
+        self.ln2 = RMSNorm(d_model, device=device)
+
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
+        x = x + self.mha(self.ln1(x), token_positions)
+        x = x + self.ffn(self.ln2(x))
+        return x
