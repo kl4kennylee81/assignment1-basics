@@ -109,5 +109,27 @@ def scaled_dot_product_attention(
         wei = wei.masked_fill(mask == 0, float('-inf'))
     wei = softmax(wei, dim=-1)
     return einsum(wei, V, "... queries keys, ... keys d_v -> ... queries d_v")
-    
+
+class MultiheadAttention(nn.Module):
+    def __init__(self, d_model:int, num_heads:int, device=None):
+        super().__init__()
+        self.num_heads = num_heads
+        self.dk = d_model // num_heads
+        self.d_model = d_model
+        self.Q = Linear(d_model, self.dk * self.num_heads, device=device)
+        self.K = Linear(d_model, self.dk * self.num_heads, device=device)
+        self.V = Linear(d_model, self.dk * self.num_heads, device=device)
+        self.Wo = Linear(self.dk * num_heads, d_model, device=device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        q,k,v = self.Q(x), self.K(x), self.V(x)
+        q = rearrange(q, "... seq (num_heads dk) -> ... num_heads seq dk", num_heads=self.num_heads)
+        k = rearrange(k, "... seq (num_heads dk) -> ... num_heads seq dk", num_heads=self.num_heads)
+        v = rearrange(v, "... seq (num_heads dv) -> ... num_heads seq dv", num_heads=self.num_heads)
+
+        seq = k.shape[-2]
+        mask = torch.tril(torch.ones(seq, seq))
+        attn = scaled_dot_product_attention(q, k, v, mask)
+        attn = rearrange(attn, "... num_heads seq dv -> ... seq (num_heads dv)")
+        return self.Wo(attn)
 
