@@ -1,0 +1,147 @@
+a.
+vocab_size : 50,257
+context_length : 1,024
+num_layers : 48
+d_model : 1,600
+num_heads : 25 
+d_ff : 6,400
+
+Suppose we constructed our model using this configuration. How many trainable parameters would our model have?
+Assuming each parameter is represented using single-precision floating point, how much memory is required to just load this model?
+
+embedding = 50,257 * 1600 = 80,411,200
+block = 40,963,200 * num_layers = 
+- ffn (swiglu) - 3 * 6400 * 1600 = 30,720,000
+- rmsnorm - 3200 (1 for ffn + 1 for attention)
+- attention - 4 * 1600*1600 = 10,240,000
+- total 40,963,200 per block
+- final rmsnorm = 1600
+- language head = 1600 * 50,257 = 80,411,200
+total trainable = 2,127,057,600
+~8gb
+
+2.
+RMSNorm (~477M FLOPs total)
+Per layer: ~9.8M FLOPs (element-wise operations: square, mean, sqrt, divide, scale)
+All layers + final: ~477M FLOPs total
+
+RoPE (~20.1B FLOPs total)
+Per layer: ~419M FLOPs (applying rotation matrices to Q and K)
+All layers: ~20.1B FLOPs total
+
+SWIGLU Feed-forward:
+W1 projection: [1024, 1600] @ [1600, 6400] = 20,971,520,000 FLOPs
+W3 projection: [1024, 1600] @ [1600, 6400] = 20,971,520,000 FLOPs
+W2 projection: [1024, 6400] @ [6400, 1600] = 20,971,520,000 FLOPs
+Subtotal: 62,914,560,000 FLOPs per layer
+
+Total per layer: 90,596,966,400 FLOPs
+
+attn
+Q projection: [1024, 1600] @ [1600, 1600] = 5,242,880,000 FLOPs
+K projection: [1024, 1600] @ [1600, 1600] = 5,242,880,000 FLOPs
+V projection: [1024, 1600] @ [1600, 1600] = 5,242,880,000 FLOPs
+Attention scores: 25 heads × [1024, 64] @ [64, 1024] = 3,355,443,200 FLOPs
+Attention @ V: 25 heads × [1024, 1024] @ [1024, 64] = 3,355,443,200 FLOPs
+Output projection: [1024, 1600] @ [1600, 1600] = 5,242,880,000 FLOPs
+Subtotal: 27,682,406,400 FLOPs per layer
+
+Final Operations:
+Language modeling head: [1024, 1600] @ [1600, 50257] = 164,682,137,600 FLOPs
+
+Total Calculation:
+All 48 layers: 48 × 90,596,966,400 = 4,348,654,387,200 FLOPs
+LM head: 164,682,137,600 FLOPs
+Grand total: 4,513,336,524,800 FLOPs (4.51 TFLOP)
+
+3. ffn is computationally the most expensive in the gpt2 xl configuration
+
+4. Repeat your analysis with GPT-2 small (12 layers, 768 d_model, 12 heads), 
+GPT-2 medium (24 layers, 1024 d_model, 16 heads), and GPT-2 large (36 layers, 1280 d_model, 20 heads)
+As the model size increases, which parts of the Transformer LM take up proportionally more or less of the total FLOPs?
+
+GPT-2 Small (12 layers, 768 d_model, 12 heads):
+
+Attention per layer: 8.05 GFLOP (35.7% of layer)
+SWIGLU per layer: 14.50 GFLOP (64.3% of layer)
+Total per layer: 22.55 GFLOP
+All layers: 270.58 GFLOP
+LM head: 79.05 GFLOP
+Total: 0.35 TFLOP
+
+GPT-2 Medium (24 layers, 1024 d_model, 16 heads):
+
+Attention per layer: 12.88 GFLOP (33.3% of layer)
+SWIGLU per layer: 25.77 GFLOP (66.7% of layer)
+Total per layer: 38.65 GFLOP
+All layers: 927.71 GFLOP
+LM head: 105.40 GFLOP
+Total: 1.03 TFLOP
+
+GPT-2 Large (36 layers, 1280 d_model, 20 heads):
+
+Attention per layer: 18.79 GFLOP (31.8% of layer)
+SWIGLU per layer: 40.27 GFLOP (68.2% of layer)
+Total per layer: 59.06 GFLOP
+All layers: 2,126.01 GFLOP
+LM head: 131.75 GFLOP
+Total: 2.26 TFLOP
+
+Analysis: Proportional Changes with Model Size
+Within Each Layer:
+
+SWIGLU feed-forward takes up proportionally MORE computation as models grow (64.3% → 66.7% → 68.2%)
+Multi-head attention takes up proportionally LESS computation as models grow (35.7% → 33.3% → 31.8%)
+
+Across the Entire Model:
+
+Language modeling head takes up proportionally MUCH LESS of total FLOPs as models grow (22.6% → 10.2% → 5.8%)
+Transformer layers take up proportionally MORE of total FLOPs as models grow (77.4% → 89.8% → 94.2%)
+
+As models scale up, the SWIGLU feed-forward network becomes increasingly dominant within each layer
+while the language modeling head becomes relatively insignificant compared to the transformer layers in the overall computation budget.
+
+
+e. Take GPT-2 XL and increase the context length to 16,384. 
+How does the total FLOPs for one forward pass change?
+How do the relative contribution of FLOPs of the model components change?
+
+Answer: GPT-2 XL with 16,384 Context Length
+Total FLOPs Change:
+
+Original (1,024 context): 4.51 TFLOP
+Extended (16,384 context): 149.52 TFLOP
+Scaling factor: 33.1x increase (not just 16x!)
+
+Component-wise Scaling:
+Linear Scaling Components (16x):
+
+Q, K, V projections: 16.0x scaling
+Output projection: 16.0x scaling
+SWIGLU FFN: 16.0x scaling
+LM head: 16.0x scaling
+
+Quadratic Scaling Components (256x):
+
+Attention scores (Q @ K^T): 256.0x scaling
+Attention @ V: 256.0x scaling
+
+Dramatic Shift in Relative Contributions:
+Within Each Layer:
+
+Attention: 30.6% → 67.1% (+36.5%)
+SWIGLU: 69.4% → 32.9% (-36.5%)
+
+Across Total Model:
+
+All layers: 96.4% → 98.2% (+1.9%)
+LM head: 3.6% → 1.8% (-1.9%)
+
+Key Insights:
+
+Attention Becomes Dominant: At long context lengths, attention computation flips from being the smaller component (31%) to dominating layer computation (67%) due to quadratic scaling.
+SWIGLU Relatively Diminished: While SWIGLU still increases 16x in absolute terms, it becomes the smaller component relative to attention at long contexts.
+Massive Compute Explosion: The 33x total increase (far beyond the 16x context increase) demonstrates why long-context models are prohibitively expensive and why techniques like sparse attention, sliding windows, and other efficiency optimizations become critical for practical deployment.
+
+This analysis shows why architectural innovations for handling long sequences (like Longformer, BigBird, or recent linear attention variants)
+focus primarily on making attention more efficient rather than optimizing the feed-forward layers.
