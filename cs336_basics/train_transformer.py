@@ -92,8 +92,21 @@ def lr_cosine_schedule(
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
     return min_lr + coeff * (max_lr - min_lr)
 
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps=1e-6) -> None:
+    """Given a set of parameters, clip their combined gradients to have l2 norm at most max_l2_norm.
 
+    Args:
+        parameters (Iterable[torch.nn.Parameter]): collection of trainable parameters.
+        max_l2_norm (float): a positive value containing the maximum l2-norm.
 
+    The gradients of the parameters (parameter.grad) should be modified in-place.
+    """
+    grad_params = [p for p in parameters if p.grad is not None]
+    l2norm = torch.sqrt(sum([torch.sum(p.grad ** 2) for p in grad_params]))
+    if l2norm < max_l2_norm:
+        return
+    for p in grad_params:
+        p.grad *= (max_l2_norm/ (l2norm + eps))
 
 
 
