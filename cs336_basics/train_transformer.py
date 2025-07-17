@@ -73,16 +73,24 @@ class AdamW(torch.optim.Optimizer):
                 state["v"] = v
         return loss
 
-if __name__ == "__main__":
-    weights = torch.nn.Parameter(5 * torch.randn((10, 10)))
-    opt = SGD([weights], lr=1e2)
-    for t in range(10):
-        opt.zero_grad() # Reset the gradients for all learnable parameters. 
-        loss = (weights**2).mean() # Compute a scalar loss value. 
-        print(loss.cpu().item())
-        loss.backward() # Run backward pass, which computes gradients. 
-        opt.step() # Run optimizer step.
-
+def lr_cosine_schedule(
+    it: int,
+    max_lr: float,
+    min_lr: float,
+    warmup_steps: int,
+    cosine_cycle_iters: int,
+):
+    # 1) linear warmup for warmup_iters steps
+    if it < warmup_steps:
+        return max_lr * it / warmup_steps
+    # 2) if it > cosine_cycle_iters, return min learning rate
+    if it >= cosine_cycle_iters:
+        return min_lr
+    # 3) in between, use cosine decay down to min learning rate
+    decay_ratio = (it - warmup_steps) / (cosine_cycle_iters - warmup_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
+    return min_lr + coeff * (max_lr - min_lr)
 
 
 
