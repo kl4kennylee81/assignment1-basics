@@ -40,6 +40,38 @@ class SGD(torch.optim.Optimizer):
                 p.data -= lr / math.sqrt(t + 1) * p.grad.data
                 state["t"] = t + 1
         return loss
+    
+class AdamW(torch.optim.Optimizer):
+
+    def __init__(self, params, lr=1e-3, weight_decay=0.0, betas=(0.9,0.999), eps = 1e-8):
+        defaults = {"lr" : lr, "betas": betas, "weight_decay": weight_decay, "eps": eps}
+        super().__init__(params, defaults)
+
+    
+    def step(self, closure: Optional[Callable] = None):
+        loss = None if closure is None else closure()
+        for group in self.param_groups:
+            lr = group["lr"]
+            b1,b2 = group["betas"]
+            eps = group["eps"]
+            weight_decay = group["weight_decay"]
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                state = self.state[p]
+                t = state.get("t", 1)
+                m = state.get("m", torch.zeros_like(p.data))
+                v = state.get("v", torch.zeros_like(p.data))
+                g = p.grad.data
+                m = b1 * m + (1-b1) * g
+                v = b2*v + (1-b2) * g**2
+                lr_t = lr * math.sqrt((1-b2**t)) / (1 - b1**t)
+                p.data -= lr_t * m / (torch.sqrt(v) + eps)
+                p.data -= lr * weight_decay * p.data
+                state["t"] = t + 1
+                state["m"] = m
+                state["v"] = v
+        return loss
 
 if __name__ == "__main__":
     weights = torch.nn.Parameter(5 * torch.randn((10, 10)))
