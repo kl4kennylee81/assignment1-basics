@@ -1,10 +1,15 @@
-import regex as re
-import json
+# Standard library imports
+import argparse
 import base64
-from typing import Iterable, Iterator
-import sys
-import numpy as np
+import json
 import os
+import sys
+from pathlib import Path
+from typing import Iterable, Iterator
+
+# Third-party imports
+import numpy as np
+import regex as re
 from tqdm import tqdm
 
 def pretokenize_for_encoding(text, special_tokens=None):
@@ -204,57 +209,98 @@ class Tokenizer:
                 for token_id in tokens:
                     yield token_id
 
-def roundtrip_tinystories_sample():
-    print("Loading tokenizer...")
-    tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<endoftext>"])
-    data_path = "data/tinystories_sample_5M.txt"
+def roundtrip_tinystories_sample(file_path):
+    """
+    Encode and decode a text file using TinyStories tokenizer.
+    
+    Args:
+        file_path: Path to the text file to encode
+    """
+    # Validate input file exists
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Input file not found: {file_path}")
     
     # Get original file size
-    original_size = os.path.getsize("data/tinystories_sample_5M.txt")
-    print(f"File size: {original_size:,} bytes ({original_size / (1024*1024):.2f} MB)")
+    original_size = os.path.getsize(file_path)
     
-    # Read file with progress
+    print("Loading tokenizer...")
+    tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<endoftext>"])
+    
     print("Reading file...")
-    with open(data_path, "r", encoding="utf-8") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
     
     print("Encoding text...")
     encoded = tokenizer.encode(text)
     
-    print("Saving to NumPy array...")
-    # Save as NumPy array
+    # Create output filename based on input filename
+    input_path = Path(file_path)
+    output_filename = f"{input_path.stem}_encoded.npy"
+    output_path = Path("output") / output_filename
+    
+    # Ensure output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    print("Saving array...")
     encoded_array = np.array(encoded, dtype=np.uint16)
-    np.save("output/encoded.npy", encoded_array)
+    np.save(output_path, encoded_array)
+    encoded_size = os.path.getsize(output_path)
     
-    # Get encoded file size
-    encoded_size = os.path.getsize("output/encoded.npy")
-    
-    print(f"\nResults:")
-    print(f"Original file size: {original_size:,} bytes ({original_size / (1024*1024):.2f} MB)")
-    print(f"Encoded file size: {encoded_size:,} bytes ({encoded_size / (1024*1024):.2f} MB)")
-    print(f"Compression ratio: {original_size / encoded_size:.2f}x")
-    print(f"Saved {len(encoded):,} tokens to output/encoded.npy")
-    
-    # Read the file back in
-    print("\nVerifying round-trip...")
-    loaded_tokens = np.load("output/encoded.npy")
-    
-    # Convert back to Python list of ints for decoding
+    print("Verifying round-trip...")
+    loaded_tokens = np.load(output_path)
     token_ids = loaded_tokens.tolist()
-    
-    # Decode back to text
-    print("Decoding...")
     decoded_text = tokenizer.decode(token_ids)
     
-    print(f"Loaded {len(loaded_tokens):,} tokens from output/encoded.npy")
-    print(f"Decoded text preview (first 500 chars):")
-    print(repr(decoded_text[:500]))
+    # Results summary
+    print(f"\nResults:")
+    print(f"File: {file_path}")
+    print(f"Original: {original_size:,} bytes ({original_size / (1024*1024):.2f} MB)")
+    print(f"Encoded: {encoded_size:,} bytes ({encoded_size / (1024*1024):.2f} MB)")
+    print(f"Compression: {original_size / encoded_size:.2f}x")
+    print(f"Tokens: {len(encoded):,}")
+    print(f"Output: {output_path}")
     
-    # Verify round-trip works
+    # Verify round-trip
     if decoded_text == text:
-        print("✓ Round-trip encoding/decoding successful!")
+        print("✓ Round-trip successful")
     else:
-        print("⚠ Warning: Decoded text doesn't match original")
+        print("⚠ Round-trip failed")
+        for i, (a, b) in enumerate(zip(text, decoded_text)):
+            if a != b:
+                print(f"First diff at pos {i}: '{a}' vs '{b}'")
+                break
+    
+    # Verify round-trip
+    if decoded_text == text:
+        print("✓ Round-trip successful")
+    else:
+        print("⚠ Round-trip failed")
+        for i, (a, b) in enumerate(zip(text, decoded_text)):
+            if a != b:
+                print(f"First diff at pos {i}: '{a}' vs '{b}'")
+                break
+
+def main():
+    parser = argparse.ArgumentParser(description="Encode text file using TinyStories tokenizer")
+    parser.add_argument("file_path", 
+                       help="Path to the text file to encode")
+    parser.add_argument("--output-dir", default="output",
+                       help="Output directory for encoded file (default: output)")
+    
+    args = parser.parse_args()
+    
+    try:
+        roundtrip_tinystories_sample(args.file_path)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        exit(1)
+    except Exception as e:
+        print(f"Error processing file: {e}")
+        exit(1)
 
 if __name__ == "__main__":
-  roundtrip_tinystories_sample()
+    main()
+
+# Example usage:
+# python cs336_basics/tokenizer.py data/TinyStoriesV2-GPT4-valid.txt
+# python cs336_basics/tokenizer.py data/TinyStoriesV2-GPT4-train.txt
