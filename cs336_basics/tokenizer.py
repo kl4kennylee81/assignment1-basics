@@ -231,7 +231,11 @@ def roundtrip_tinystories_sample(file_path):
         text = f.read()
     
     print("Encoding text...")
-    encoded = tokenizer.encode(text)
+    encoded = list(tqdm(tokenizer.encode_iterable(text), 
+                    desc="Encoding", 
+                    unit="tokens", 
+                    position=0,
+                    leave=True))
     
     # Create output filename based on input filename
     input_path = Path(file_path)
