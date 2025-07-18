@@ -16,8 +16,8 @@ from jaxtyping import Float, Int
 from torch import Tensor
 from tqdm import tqdm
 
-# Local imports
 from cs336_basics.transformer import Transformer
+from cs336_basics.tokenizer import Tokenizer
 
 
 def cross_entropy(inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]) -> Float[Tensor, ""]:
@@ -202,10 +202,11 @@ class TrainModelArgs:
     cosine_cycle_iters: int = 4000
 
     #training loop args
-    training_set: str | os.PathLike | BinaryIO | IO[bytes]
-    validation_set: str | os.PathLike | BinaryIO | IO[bytes]
+    training_set: str | os.PathLike | BinaryIO | IO[bytes] = ""
+    validation_set: str | os.PathLike | BinaryIO | IO[bytes] = ""
 
-    tokenizer_state: str | os.PathLike | BinaryIO | IO[bytes]
+    tokenizer_vocab: str | os.PathLike | BinaryIO | IO[bytes] = ""
+    tokenizer_merge: str | os.PathLike | BinaryIO | IO[bytes] = ""
 
     validation_step_interval: int = 100
     checkpoint_step_interval: int = 1000
@@ -218,6 +219,10 @@ class TrainModelArgs:
     'mps:0' if torch.backends.mps.is_available() else 
     'cuda' if torch.cuda.is_available() else 
     'cpu')
+
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 def parse_args():
     """Parse command line arguments using defaults from TrainModelArgs."""
@@ -269,8 +274,10 @@ def parse_args():
                            help=f'Path to training data (default: {defaults.training_set})')
     data_group.add_argument('--validation-set', type=str, default=defaults.validation_set,
                            help=f'Path to validation data (default: {defaults.validation_set})')
-    data_group.add_argument('--tokenizer-state', type=str, default=defaults.tokenizer_state,
-                           help=f'Path to tokenizer state (default: {defaults.tokenizer_state})')
+    data_group.add_argument('--tokenizer-vocab', type=str, default=defaults.tokenizer_vocab,
+                           help=f'Path to tokenizer state (default: {defaults.tokenizer_vocab})')
+    data_group.add_argument('--tokenizer-merge', type=str, default=defaults.tokenizer_merge,
+                           help=f'Path to tokenizer state (default: {defaults.tokenizer_merge})')
     
     # Training arguments
     train_group = parser.add_argument_group('Training Configuration')
@@ -330,7 +337,8 @@ def args_to_dataclass(args):
         # Data paths
         training_set=args.training_set,
         validation_set=args.validation_set,
-        tokenizer_state=args.tokenizer_state,
+        tokenizer_vocab=args.tokenizer_vocab,
+        tokenizer_merge=args.tokenizer_merge,
         
         # Training config
         validation_step_interval=args.validation_step_interval,
@@ -363,6 +371,7 @@ class TrainModel:
             weight_decay=args.weight_decay,
             betas=args.betas
         )
+        self.tokenizer = Tokenizer.from_files(self.args.tokenizer_vocab, self.args.tokenizer_merge,["<endoftext>"])
 
         self.training_set = np.load(self.args.training_set, mmap_mode='r')
         self.validation_set = np.load(self.args.validation_set, mmap_mode='r')
@@ -455,10 +464,3 @@ def main():
         raise
     
     print("✅ Training completed successfully!")
-
-# Example usage:
-# python train.py --steps 10000 --batch-size 64 --max-learning-rate 1e-3
-# python train.py --training-set /path/to/train.npy --validation-set /path/to/val.npy
-# python train.py --device cuda --num-layers 6 --d-model 768 
-if __name__ == "__main__":
-    main()
