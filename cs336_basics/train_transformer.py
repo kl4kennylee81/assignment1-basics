@@ -109,4 +109,16 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
         p.grad *= (max_l2_norm/ (l2norm + eps))
 
 
+def get_batch(
+    dataset: npt.NDArray, batch_size: int, context_length: int, device: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+    xs = []
+    ys = []
+    for i in range(batch_size):
+        idx = np.random.randint(0, len(dataset) - context_length)
+        xs.append(dataset[idx: idx + context_length])
+        ys.append(dataset[idx+1: idx + context_length + 1])
 
+    xs = torch.tensor(xs, device=device)
+    ys = torch.tensor(ys, device=device)
+    return (xs,ys)
