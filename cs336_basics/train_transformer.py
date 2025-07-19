@@ -443,6 +443,41 @@ class TrainModel:
 
         save_checkpoint(self.model, self.optimizer, self.cur_step, f"./output/checkpoint-{self.cur_step}.pth")
 
+    def generate_text(self, input_text, max_length, topk=50, temperature=0.5):
+        # Encode input and add batch dimension
+        tokens = self.tokenizer.encode(input_text)
+        eot = self.tokenizer.encode('<|endoftext|>')
+        print(f"eot-{eot}")
+        x = torch.tensor(tokens, dtype=torch.long).unsqueeze(0).to(self.args.device)
+        
+        self.model.eval()
+        with torch.no_grad():
+            for _ in range(max_length - x.size(1)):  # Limit iterations
+                # Truncate if exceeds context length
+                if x.size(1) >= self.args.context_length:
+                    x = x[:, -self.args.context_length:]
+                
+                # Get logits and apply temperature
+                logits = self.model(x)[:, -1, :] / temperature
+                probs = torch.nn.functional.softmax(logits, dim=-1)
+                
+                # Top-k sampling
+                topk_probs, topk_indices = torch.topk(probs, topk, dim=-1)
+                ix = torch.multinomial(topk_probs, 1)
+                next_token = torch.gather(topk_indices, -1, ix)
+
+                
+                # Append token
+                x = torch.cat((x, next_token), dim=1)
+                
+                # Optional: Stop if end token is generated
+                if next_token.item() == eot:
+                    break
+        
+        # Decode and return
+        tokens = x[0].tolist()
+        return self.tokenizer.decode(tokens)
+
 def main():
     # Parse command line arguments
     parsed_args = parse_args()
