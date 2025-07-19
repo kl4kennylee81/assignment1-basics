@@ -152,7 +152,7 @@ Line #      Hits         Time  Per Hit   % Time  Line Contents
    209                                           @profile
    210                                           def roundtrip_tinystories_sample():
    211         1         14.0     14.0      0.0      print("Loading tokenizer...")
-   212         1     262051.0 262051.0      0.1      tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<endoftext>"])
+   212         1     262051.0 262051.0      0.1      tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<|endoftext|>"])
    213         1          1.0      1.0      0.0      data_path = "data/tinystories_sample_5M.txt"
    214                                               
    215                                               # Get original file size

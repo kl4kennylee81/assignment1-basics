@@ -106,7 +106,7 @@ def parallel_encode_with_boundaries(
         List of encoded token IDs
     """
     if special_tokens is None:
-        special_tokens = ["<endoftext>"]
+        special_tokens = ["<|endoftext|>"]
     
     if num_workers is None:
         num_workers = min(mp.cpu_count(), 8)

@@ -371,7 +371,7 @@ class TrainModel:
             weight_decay=args.weight_decay,
             betas=args.betas
         )
-        self.tokenizer = Tokenizer.from_files(self.args.tokenizer_vocab, self.args.tokenizer_merge,["<endoftext>"])
+        self.tokenizer = Tokenizer.from_files(self.args.tokenizer_vocab, self.args.tokenizer_merge,["<|endoftext|>"])
 
         self.training_set = np.load(self.args.training_set, mmap_mode='r')
         self.validation_set = np.load(self.args.validation_set, mmap_mode='r')

@@ -224,7 +224,7 @@ def roundtrip_tinystories_sample(file_path):
     original_size = os.path.getsize(file_path)
     
     print("Loading tokenizer...")
-    tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<endoftext>"])
+    tokenizer = Tokenizer.from_files("output/tinystories_vocab.json", "output/tinystories_merges.txt", ["<|endoftext|>"])
     
     print("Reading file...")
     with open(file_path, "r", encoding="utf-8") as f:
